@@ -1,34 +1,34 @@
 #!/bin/bash
-# notify.sh - Invia una notifica via Telegram e Email
-#
-# Configurazioni (modifica questi valori secondo le tue impostazioni)
-TELEGRAM_BOT_TOKEN="52945090850:25LKJFD98R0LA9E0843POJFDA09834J"  # Inserisci il token del tuo bot Telegram
-TELEGRAM_CHAT_ID="602704974"                                        # Inserisci l'ID chat dove inviare il messaggio
-EMAIL_DESTINATARIO="EMAIL@DOMAIN.com"                                 # Inserisci l'indirizzo email di destinazione
+# notify.sh - Invia notifiche formattate a Telegram
 
-# Verifica che sia stato passato un messaggio come parametro
-if [ -z "$1" ]; then
-  echo "Utilizzo: $0 \"Messaggio di notifica\""
-  exit 1
+TTELEGRAM_BOT_TOKEN="52945090850:25LKJFD98R0LA9E0843POJFDA09834J"  # Inserisci il token del tuo bot Telegram
+TELEGRAM_CHAT_ID="602704974"                                        # Inserisci l'ID chat dove inviare il messaggio
+EMAIL_DESTINATARIO="EMAIL@DOMAIN.com"
+
+[ -z "$1" ] && echo "Usage: $0 \"notification message\"" && exit 1
+
+# Determina icona in base al messaggio
+if [[ "$1" == *"SUCCESS"* ]] || [[ "$1" == *"Completato"* ]]; then
+  ICON="✅"
+elif [[ "$1" == *"ERROR"* ]] || [[ "$1" == *"Fallito"* ]]; then
+  ICON="❌"
+else
+  ICON="ℹ️"
 fi
 
-MESSAGE="$1"
+# Costruisci il messaggio con newline reali
+MESSAGE=$(cat <<EOF
+${ICON} MEGA Backup
+—————————————
+${1}
+EOF
+)
 
-# Funzione: invia notifica via Telegram
-send_telegram() {
-  curl -s -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage" \
-    -d chat_id="$TELEGRAM_CHAT_ID" \
-    -d text="$MESSAGE"
-}
+# Invia a Telegram
+curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+  -d chat_id="${TELEGRAM_CHAT_ID}" \
+  -d text="${MESSAGE}" \
+  -d parse_mode="Markdown"
 
-# Funzione: invia notifica via Email
-send_email() {
-  echo "$MESSAGE" | mail -s "Notifica MEGA Backup" "$EMAIL_DESTINATARIO"
-}
-
-# Invia entrambe le notifiche
-send_telegram
-# send_email
-
-echo "Notifica inviata: $MESSAGE"
+echo "Notifica inviata: ${1}"
 exit 0

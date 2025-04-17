@@ -130,4 +130,4 @@ MIT License - Free for personal and commercial use
 
 > ✍️ **Last Updated**: $(date +%Y-%m-%d)  
 > 🏷 **Version**: 2.1  
-> 👨💻 **Maintainer**: Backup Administrator
+> 👨💻 **Maintainer**: Natan Gallo

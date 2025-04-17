@@ -35,7 +35,7 @@ NOTIFY_SCRIPT="./notify.sh"
 
 # Backup sources (modify as needed)
 sources=(
-  "/home/remote_server/mega-bkp"
+  "/your/source/folder"
   # Add more paths if needed
 )
 

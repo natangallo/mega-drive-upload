@@ -2,9 +2,9 @@
 # notify.sh - Invia una notifica via Telegram e Email
 #
 # Configurazioni (modifica questi valori secondo le tue impostazioni)
-TELEGRAM_BOT_TOKEN="7941722837:AAFL4V0rv5mEGIQEZ7Dz74VkwKXKMSa49VQ"  # Inserisci il token del tuo bot Telegram
-TELEGRAM_CHAT_ID="243984267"                                        # Inserisci l'ID chat dove inviare il messaggio
-EMAIL_DESTINATARIO="natanaele.gallo@gmail.com"                                 # Inserisci l'indirizzo email di destinazione
+TELEGRAM_BOT_TOKEN="52945090850:25LKJFD98R0LA9E0843POJFDA09834J"  # Inserisci il token del tuo bot Telegram
+TELEGRAM_CHAT_ID="602704974"                                        # Inserisci l'ID chat dove inviare il messaggio
+EMAIL_DESTINATARIO="EMAIL@DOMAIN.com"                                 # Inserisci l'indirizzo email di destinazione
 
 # Verifica che sia stato passato un messaggio come parametro
 if [ -z "$1" ]; then

@@ -266,7 +266,7 @@ error_log() {
 # Critical error handling
 error_exit() {
   error_log "$1"
-  [ -n "$NOTIFY_SCRIPT" ] && $NOTIFY_SCRIPT "Backup on MegaDrive failed: $1"
+  [ -n "$NOTIFY_SCRIPT" ] && $NOTIFY_SCRIPT "SUCCESS: Backup on MegaDrive failed: $1"
   exit 1
 }
 
@@ -372,5 +372,5 @@ for src in "${sources[@]}"; do
 done
 
 debug_log "Backup completed successfully"
-[ -n "$NOTIFY_SCRIPT" ] && run_command "\"$NOTIFY_SCRIPT\" \"Backup on MegaDrive, completed successfully\""
+[ -n "$NOTIFY_SCRIPT" ] && run_command "\"$NOTIFY_SCRIPT\" \"SUCCESS: Backup on MegaDrive, completed successfully\""
 exit 0

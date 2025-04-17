@@ -11,6 +11,7 @@
 # 1.0     | 2024-03-08 | Natan Gallo | Initial release
 # 2.0     | 2024-03-10 | Natan Gallo | added debug and production mode
 # 3.0     | 2024-03-10 | Natan Gallo | Implemented chunk creation
+# 3.1     | 2024-03-12 | Natan Gallo | Added duplicate file management
 # ===============================================================================
 
 ###############################################################################
@@ -193,9 +194,19 @@ split_and_transfer() {
 compress_and_transfer() {
   local source="$1"
   local volume="$2"
+  local backup_name="backup_$(basename "$source").tar.gz"
   local tmpfile="$TMP_DIR/backup_temp_$(basename "$source").tar.gz"
   
-  # Check local disk space
+  # 1. Check and clean existing backups
+  debug_log "Checking for existing backups of '$backup_name'"
+  for v in "${volumes[@]}"; do
+    if run_command "mega-find \"$v/$backup_name\"" | grep -q "$backup_name"; then
+      debug_log "Found existing backup on $v - removing..."
+      run_command "mega-rm \"$v/$backup_name\""
+    fi
+  done
+
+  # 2. Check local disk space
   local source_size=$(du -sb "$source" | awk '{print $1}')
   local local_free=$(df -B1 "$TMP_DIR" | awk 'NR==2 {print $4}')
   
@@ -204,8 +215,8 @@ compress_and_transfer() {
     return 1
   fi
 
+  # 3. Compress source
   debug_log "Compressing '$source'..."
-  
   if ! run_command "tar -czf \"$tmpfile\" \"$source\""; then
     error_log "Compression failed for '$source'"
     safe_remove "$tmpfile"
@@ -217,26 +228,29 @@ compress_and_transfer() {
   
   debug_log "$(basename "$source") - Size: $(format_number $filesize) - Needed: $(format_number $free_space)"
 
+  # 4. Handle file transfer
   if (( filesize > free_space )); then
-    debug_log "Not enough space on '$volume'"
-    safe_remove "$tmpfile"
-    return 1
+    debug_log "File too large for single volume, splitting across volumes..."
+    if split_and_transfer "$source" "$tmpfile" "$filesize"; then
+      safe_remove "$tmpfile"
+      return 0
+    else
+      safe_remove "$tmpfile"
+      return 1
+    fi
   fi
   
+  # 5. Standard transfer
   debug_log "Transferring '$tmpfile' to '$volume'"
-  
-  # controllo degli spazi nei percorsi
   if [[ "$tmpfile" == *" "* ]] || [[ "$volume" == *" "* ]]; then
-    error_log "Spazi nei percorsi non supportati: '$tmpfile' o '$volume'"
+    error_log "Spaces in paths not supported: '$tmpfile' or '$volume'"
     return 1
   fi
   
-  if ! run_command "mega-put '$tmpfile' '$volume/backup_$(basename "$source").tar.gz'"; then
-#  if ! run_command "mega-put \"$tmpfile\" \"$volume/backup_$(basename \"$source\").tar.gz\""; then
+  if ! run_command "mega-put '$tmpfile' '$volume/$backup_name'"; then
     error_log "Transfer failed for '$source'"
     safe_remove "$tmpfile"
     
-    # Check if failure was due to full volume
     if (( $(get_free_space "$volume") < block_min_size )); then
       debug_log "Volume filled during transfer, trying next volume"
       return 2

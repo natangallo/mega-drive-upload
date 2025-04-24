@@ -1,4 +1,3 @@
-```markdown
 # MEGA Backup System (Proxmox Optimized)
 
 ![MEGA Logo](https://mega.nz/favicon.ico)  

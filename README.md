@@ -1,133 +1,163 @@
-# MEGA Backup System
+```markdown
+# MEGA Backup System (Proxmox Optimized)
 
 ![MEGA Logo](https://mega.nz/favicon.ico)  
-**Automated compressed backup to MEGA cloud with multi-volume support**
+**Automated backup to MEGA with Proxmox support and smart compression**
 
 ---
 
 ## 📌 Overview
 
-This system provides an automated way to:
-- Compress files/folders
-- Split large backups across multiple MEGA volumes
-- Handle session management and error recovery
-- Support both production and dry-run modes
+This system now provides enhanced capabilities:
+- Native support for Proxmox backups (`.vma.gz`, `.tar.zst`)
+- Dual-mode compression (auto-detects compressed files)
+- Improved multi-volume management
+- Enhanced logging and error handling
 
 ---
 
-## 📂 File Structure
+## 📂 File Structure (Updated)
 
 ```
 mega-backup/
-├── perform_backup.sh          # Main backup script
-├── check_session.sh           # MEGA session verification
+├── perform_backup.sh          # Main script (v4.0)
+├── check_session.sh           # MEGA session verification  
 ├── notify.sh                  # Notification handler
-└── README.md                  # Documentation
+├── mega-backup.log            # Auto-generated log file
+└── README.md                  # This documentation
 ```
 
 ---
 
-## 🛠 Configuration
+## 🛠 Configuration (v4.0 Updates)
 
 ### 🔧 Main Script (`perform_backup.sh`)
 
-| Variable               | Default      | Description                                                                 |
-|------------------------|--------------|-----------------------------------------------------------------------------|
-| `DEBUG`                | `1`          | Enable verbose logging (`0`=silent, `1`=debug)                              |
-| `PRODUCTION`           | `1`          | Operational mode (`0`=dry-run, `1`=real operations)                        |
-| `block_min_size`       | `10485760`   | Minimum free space (10MB) to consider a volume usable                       |
-| `split_chunk_size`     | `1073741824` | Split size for large files (1GB)                                            |
-| `TMP_DIR`              | `/tmp`       | Temporary directory for compressed files                                    |
-| `sources`              | -            | Array of paths to back up                                                   |
+| Variable               | Default               | Description                                                                 |
+|------------------------|-----------------------|-----------------------------------------------------------------------------|
+| `DEBUG`                | `1`                   | Verbose logging (`0`=silent, `1`=debug)                                     |
+| `PRODUCTION`           | `1`                   | Operational mode (`0`=dry-run, `1`=real ops)                                |
+| `MIN_FREE_SPACE`       | `10485760` (10MB)     | Minimum usable space per volume                                             |
+| `CHUNK_SIZE`           | `1073741824` (1GB)    | Split size for large files                                                  |
+| `COMPRESSED_FORMATS`   | `("vma.gz" "tar.zst" "tar.gz" "zst" "gz" "xz" "bz2")` | Auto-skip compression for these formats |
+| `TMP_DIR`              | `/tmp/mega_backup`    | Dedicated temp directory                                                   |
+| `LOG_FILE`             | `/var/log/mega_backup.log` | Central log file                                                        |
 
-### 🔐 Session Check (`check_session.sh`)
+### 🔄 New Workflow
 
-Verifies MEGA login status with exit codes:
-- `0`: Session active
-- `1`: Session expired
-- `2`: Check failed
-- `3`: Unknown state
+1. **Smart Source Scanning**  
+   - Processes uncompressed files first
+   - Auto-skips compression for Proxmox formats
 
-### ✉️ Notifications (`notify.sh`)
+2. **Space-Aware Transfer**  
+   ```mermaid
+   graph TD
+     A[Check Volume Space] --> B{File > Space?}
+     B -->|Yes| C[Split File]
+     B -->|No| D[Direct Transfer]
+     C --> E[Rotate Volume if Full]
+   ```
 
-Sends formatted alerts to Telegram with:
-- ✅ Success messages
-- ❌ Error alerts
-- ℹ️ Information notices
-
----
-
-## 🔄 Workflow
-
-1. **Session Verification**  
-   - Validates active MEGA session
-2. **Volume Discovery**  
-   - Detects available MEGA volumes
-3. **Space Calculation**  
-   - Checks free space on each volume
-4. **Backup Execution**  
-   - Compresses source files
-   - Splits large files across volumes
-   - Transfers to MEGA cloud
+3. **Enhanced Recovery**  
+   ```bash
+   # Reassemble split Proxmox backups:
+   cat vzdump.part* > complete.vma.gz
+   qm restore <VMID> complete.vma.gz
+   ```
 
 ---
 
-## 🚀 Usage
+## 🚀 Usage Examples
 
 ```bash
-# Normal mode
-./perform_backup.sh
+# Test Proxmox backup paths (dry-run)
+SOURCES=("/var/lib/vz/dump") PRODUCTION=0 ./perform_backup.sh
 
-# Dry-run test
-PRODUCTION=0 ./perform_backup.sh
-
-# Silent mode
-DEBUG=0 ./perform_backup.sh
+# Production mode with debug
+SOURCES=("/etc" "/home" "/var/lib/vz/dump") DEBUG=1 ./perform_backup.sh
 ```
 
 ---
 
-## 🛑 Error Recovery
+## 🆕 v4.0 Features
 
-To restore split backups:
+1. **Proxmox-Optimized**  
+   - Native handling of `.vma.gz` and `.tar.zst`
+   - Preserves original backup names
+
+2. **Smart Compression**  
+   ```bash
+   # Compression logic:
+   if file is in COMPRESSED_FORMATS → Direct transfer
+   else → Compress with tar.gz
+   ```
+
+3. **Improved Volume Management**  
+   - 3 retry attempts per file
+   - Automatic volume rotation
+
+---
+
+## 📝 Best Practices (Updated)
+
+1. **For Proxmox Users**  
+   ```bash
+   # Recommended sources:
+   SOURCES=(
+     "/var/lib/vz/dump"          # Default backup location
+     "/mnt/pve/backup_storage"   # Secondary storage
+   )
+   ```
+
+2. **Security**  
+   ```bash
+   # Set proper permissions:
+   chmod 700 perform_backup.sh
+   chown root:root perform_backup.sh
+   ```
+
+3. **Monitoring**  
+   ```bash
+   # Watch live progress:
+   tail -f /var/log/mega_backup.log | grep -E 'Transferring|Compressing'
+   ```
+
+---
+
+## 🛑 Error Recovery (Enhanced)
+
+**Scenario**: Failed transfer of split backup  
+**Solution**:
 ```bash
-# Download all parts
-mega-get "//remote/path/backup.part*.tar.gz" .
+# 1. List all parts
+mega-find //backups --pattern="*.part*"
 
-# Reassemble
-cat backup.part*.tar.gz > full_backup.tar.gz
+# 2. Download missing chunks
+mega-get //backups/vzdump.part3.tar.gz .
 
-# Verify
-tar -tzf full_backup.tar.gz
+# 3. Manual reassembly
+cat vzdump.part*.tar.gz > restored.vma.gz
 ```
 
 ---
 
-## 📝 Best Practices
-
-1. **Security**
-   - Set scripts as executable only
-   ```bash
-   chmod 700 *.sh
-   ```
-   
-2. **Monitoring**
-   - Check logs regularly
-   ```bash
-   tail -f /var/log/mega-backup.log
-   ```
-
-3. **Maintenance**
-   - Rotate backup sources periodically
-   - Update credentials every 3-6 months
-
----
-
-## 📜 License
+## 📜 License  
 MIT License - Free for personal and commercial use
 
 ---
 
-> ✍️ **Last Updated**: $(date +%Y-%m-%d)  
-> 🏷 **Version**: 2.1  
-> 👨💻 **Maintainer**: Natan Gallo
+> ✍️ **Last Updated**: 2024-04-20  
+> 🏷 **Version**: 4.0  
+> 👨💻 **Maintainer**: Natan Gallo  
+> 🔗 **Compatibility**: Proxmox VE 7+, MEGA-CMD 1.5.0+
+```
+
+Key changes made:
+1. Added Proxmox-specific documentation
+2. Updated configuration variables to match v4.0
+3. Added visual workflow diagram
+4. Included Proxmox recovery examples
+5. Highlighted new v4.0 features section
+6. Updated best practices for Proxmox environments
+7. Added compatibility notice
+8. Improved structure with clear sections

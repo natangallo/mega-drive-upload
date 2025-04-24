@@ -11,8 +11,6 @@
 # 1.0     | 2024-03-08 | Natan Gallo | Initial release
 # 2.0     | 2024-03-10 | Natan Gallo | added debug and production mode
 # 3.0     | 2024-03-10 | Natan Gallo | Implemented chunk creation
-# 3.1     | 2024-03-12 | Natan Gallo | Added duplicate file management
-# 3.2     | 2024-04-17 | Natan Gallo | File-by-file processing for directories
 # ===============================================================================
 
 ###############################################################################
@@ -38,7 +36,6 @@ NOTIFY_SCRIPT="./notify.sh"
 # Backup sources (modify as needed)
 sources=(
   "/home/remote_server/mega-bkp"
-  "/var/lib/usb/dump"
   # Add more paths if needed
 )
 
@@ -196,19 +193,9 @@ split_and_transfer() {
 compress_and_transfer() {
   local source="$1"
   local volume="$2"
-  local backup_name="backup_$(basename "$source").tar.gz"
   local tmpfile="$TMP_DIR/backup_temp_$(basename "$source").tar.gz"
   
-  # 1. Check and clean existing backups
-  debug_log "Checking for existing backups of '$backup_name'"
-  for v in "${volumes[@]}"; do
-    if run_command "mega-find \"$v/$backup_name\"" | grep -q "$backup_name"; then
-      debug_log "Found existing backup on $v - removing..."
-      run_command "mega-rm \"$v/$backup_name\""
-    fi
-  done
-
-  # 2. Check local disk space
+  # Check local disk space
   local source_size=$(du -sb "$source" | awk '{print $1}')
   local local_free=$(df -B1 "$TMP_DIR" | awk 'NR==2 {print $4}')
   
@@ -217,8 +204,8 @@ compress_and_transfer() {
     return 1
   fi
 
-  # 3. Compress source
   debug_log "Compressing '$source'..."
+  
   if ! run_command "tar -czf \"$tmpfile\" \"$source\""; then
     error_log "Compression failed for '$source'"
     safe_remove "$tmpfile"
@@ -230,29 +217,26 @@ compress_and_transfer() {
   
   debug_log "$(basename "$source") - Size: $(format_number $filesize) - Needed: $(format_number $free_space)"
 
-  # 4. Handle file transfer
   if (( filesize > free_space )); then
-    debug_log "File too large for single volume, splitting across volumes..."
-    if split_and_transfer "$source" "$tmpfile" "$filesize"; then
-      safe_remove "$tmpfile"
-      return 0
-    else
-      safe_remove "$tmpfile"
-      return 1
-    fi
-  fi
-  
-  # 5. Standard transfer
-  debug_log "Transferring '$tmpfile' to '$volume'"
-  if [[ "$tmpfile" == *" "* ]] || [[ "$volume" == *" "* ]]; then
-    error_log "Spaces in paths not supported: '$tmpfile' or '$volume'"
+    debug_log "Not enough space on '$volume'"
+    safe_remove "$tmpfile"
     return 1
   fi
   
-  if ! run_command "mega-put '$tmpfile' '$volume/$backup_name'"; then
+  debug_log "Transferring '$tmpfile' to '$volume'"
+  
+  # controllo degli spazi nei percorsi
+  if [[ "$tmpfile" == *" "* ]] || [[ "$volume" == *" "* ]]; then
+    error_log "Spazi nei percorsi non supportati: '$tmpfile' o '$volume'"
+    return 1
+  fi
+  
+  if ! run_command "mega-put '$tmpfile' '$volume/backup_$(basename "$source").tar.gz'"; then
+#  if ! run_command "mega-put \"$tmpfile\" \"$volume/backup_$(basename \"$source\").tar.gz\""; then
     error_log "Transfer failed for '$source'"
     safe_remove "$tmpfile"
     
+    # Check if failure was due to full volume
     if (( $(get_free_space "$volume") < block_min_size )); then
       debug_log "Volume filled during transfer, trying next volume"
       return 2
@@ -263,45 +247,6 @@ compress_and_transfer() {
 
   safe_remove "$tmpfile"
   return 0
-}
-
-# Process directory file-by-file
-process_directory() {
-    local source="$1"
-    local files_processed=0
-    local files_skipped=0
-    
-    debug_log "Processing directory: '$source' (file-by-file mode)"
-    
-    # Use find to handle spaces in filenames
-    while IFS= read -r -d $'\0' file; do
-        # Skip if file is already a backup file
-        [[ "$file" == *.tar.gz ]] && continue
-        
-        debug_log "Processing file: '$file'"
-        
-        compress_and_transfer "$file" "${volumes[$curr_vol_index]}"
-        local result=$?
-        
-        if (( result == 0 )); then
-            ((files_processed++))
-        elif (( result == 2 )); then
-            # Volume full, try next one
-            ((curr_vol_index++))
-            if (( curr_vol_index >= ${#volumes[@]} )); then
-                error_log "All volumes full during directory processing"
-                break
-            fi
-            # Retry with next volume
-            compress_and_transfer "$file" "${volumes[$curr_vol_index]}" && ((files_processed++)) || ((files_skipped++))
-        else
-            ((files_skipped++))
-        fi
-    done < <(find "$source" -type f -print0)
-    
-    debug_log "Directory processing complete: $files_processed files backed up, $files_skipped files skipped"
-    
-    (( files_skipped > 0 )) && return 1 || return 0
 }
 
 ###############################################################################
@@ -321,7 +266,7 @@ error_log() {
 # Critical error handling
 error_exit() {
   error_log "$1"
-  [ -n "$NOTIFY_SCRIPT" ] && $NOTIFY_SCRIPT "ERROR Backup on MegaDrive failed: $1"
+  [ -n "$NOTIFY_SCRIPT" ] && $NOTIFY_SCRIPT "SUCCESS: Backup on MegaDrive failed: $1"
   exit 1
 }
 
@@ -392,36 +337,40 @@ init_volumes
 
 # Process each source
 for src in "${sources[@]}"; do
-    debug_log "Processing source: '$src'"
+  debug_log "Processing source: '$src'"
+  
+  while (( curr_vol_index < ${#volumes[@]} )); do
+    current_volume="${volumes[$curr_vol_index]}"
+    free_space=$(get_free_space "$current_volume")
     
-    if [ ! -e "$src" ]; then
-        error_log "Source not found: $src"
-        continue
+    debug_log "Volume '$current_volume' - Free space: $(format_number $free_space)"
+
+    if (( free_space < block_min_size )); then
+      debug_log "Volume full, moving to next"
+      ((curr_vol_index++))
+      continue
     fi
+
+    compress_and_transfer "$src" "$current_volume"
+    transfer_result=$?
     
-    if [ -f "$src" ]; then
-        # Single file processing
-        compress_and_transfer "$src" "${volumes[$curr_vol_index]}"
-        transfer_result=$?
-        
-        if (( transfer_result == 2 )); then
-            ((curr_vol_index++))
-            if (( curr_vol_index < ${#volumes[@]} )); then
-                compress_and_transfer "$src" "${volumes[$curr_vol_index]}"
-            else
-                error_exit "All volumes are full. Backup aborted."
-            fi
-        fi
-        
-    elif [ -d "$src" ]; then
-        # Directory processing (file-by-file)
-        process_directory "$src"
+    if (( transfer_result == 0 )); then
+      debug_log "Backup completed successfully"
+      break
+    elif (( transfer_result == 2 )); then
+      # Volume filled during transfer, try next
+      ((curr_vol_index++))
     else
-        error_log "Invalid source type: $src"
-        continue
+      # Other error, move to next volume
+      ((curr_vol_index++))
     fi
+  done
+
+  if (( curr_vol_index >= ${#volumes[@]} )); then
+    error_exit "All volumes are full. Backup aborted."
+  fi
 done
 
-debug_log "Backup operation completed"
-[ -n "$NOTIFY_SCRIPT" ] && run_command "\"$NOTIFY_SCRIPT\" \"SUCCESS: Backup completed successfully\""
+debug_log "Backup completed successfully"
+[ -n "$NOTIFY_SCRIPT" ] && run_command "\"$NOTIFY_SCRIPT\" \"SUCCESS: Backup on MegaDrive, completed successfully\""
 exit 0

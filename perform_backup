@@ -4,15 +4,16 @@
 # Script Name:   MEGA Backup Script
 # Description:   Compressed backup to multiple MEGA volumes with space management
 # Author:        Natan Gallo, chatGPT, DeepSeek
-# Created:       2024-01-10
+# Created:       2025-03-08
 # ===============================================================================
 # Version |    Date    | Author      | Description
 # --------|------------|-------------|-------------------------------------------
-# 1.0     | 2024-03-08 | Natan Gallo | Initial release
-# 2.0     | 2024-03-10 | Natan Gallo | added debug and production mode
-# 3.0     | 2024-03-10 | Natan Gallo | Implemented chunk creation
-# 3.1     | 2024-03-12 | Natan Gallo | Added duplicate file management
-# 3.2     | 2024-04-17 | Natan Gallo | File-by-file processing for directories
+# 1.0     | 2025-03-08 | Natan Gallo | Initial release
+# 2.0     | 2025-03-10 | Natan Gallo | added debug and production mode
+# 3.0     | 2025-03-10 | Natan Gallo | Implemented chunk creation
+# 3.1     | 2025-03-12 | Natan Gallo | Added duplicate file management
+# 3.2     | 2025-04-17 | Natan Gallo | File-by-file processing for directories
+# 3.3     | 2025-04-24 | Natan Gallo | Handle compressed and uncompressed files
 # ===============================================================================
 
 ###############################################################################
@@ -20,7 +21,7 @@
 ###############################################################################
 
 # Debug mode (0=disabled, 1=enabled)
-DEBUG=0
+DEBUG=1
 
 # Production mode (0=dry-run, 1=real operations)
 PRODUCTION=1
@@ -265,45 +266,124 @@ compress_and_transfer() {
   return 0
 }
 
-# Process directory file-by-file
+# Process directory handling both compressed and uncompressed files
 process_directory() {
     local source="$1"
     local files_processed=0
     local files_skipped=0
     
-    debug_log "Processing directory: '$source' (file-by-file mode)"
+    debug_log "Processing directory: '$source' (mixed content mode)"
     
-    # Use find to handle spaces in filenames
+    # Process uncompressed files first
     while IFS= read -r -d $'\0' file; do
-        # Skip if file is already a backup file
         [[ "$file" == *.tar.gz ]] && continue
         
-        debug_log "Processing file: '$file'"
+        debug_log "Processing uncompressed file: '$file'"
         
-        compress_and_transfer "$file" "${volumes[$curr_vol_index]}"
+        transfer_file "$file"
         local result=$?
         
-        if (( result == 0 )); then
-            ((files_processed++))
-        elif (( result == 2 )); then
-            # Volume full, try next one
-            ((curr_vol_index++))
-            if (( curr_vol_index >= ${#volumes[@]} )); then
-                error_log "All volumes full during directory processing"
-                break
-            fi
-            # Retry with next volume
-            compress_and_transfer "$file" "${volumes[$curr_vol_index]}" && ((files_processed++)) || ((files_skipped++))
-        else
-            ((files_skipped++))
-        fi
-    done < <(find "$source" -type f -print0)
+        handle_transfer_result "$result" || break
+        (( result == 0 )) && ((files_processed++)) || ((files_skipped++))
+    done < <(find "$source" -type f ! -name "*.tar.gz" -print0)
+    
+    # Then process already compressed files
+    while IFS= read -r -d $'\0' file; do
+        debug_log "Processing pre-compressed file: '$file'"
+        
+        transfer_file "$file" "skip_compression"
+        local result=$?
+        
+        handle_transfer_result "$result" || break
+        (( result == 0 )) && ((files_processed++)) || ((files_skipped++))
+    done < <(find "$source" -type f -name "*.tar.gz" -print0)
     
     debug_log "Directory processing complete: $files_processed files backed up, $files_skipped files skipped"
     
     (( files_skipped > 0 )) && return 1 || return 0
 }
 
+# Unified file transfer function
+transfer_file() {
+    local file="$1"
+    local compression_mode="${2:-compress}"
+    local backup_name="backup_$(basename "$file")"
+    local tmpfile="$TMP_DIR/backup_temp_$(basename "$file")"
+    
+    # Clean existing backups
+    clean_existing_backups "$backup_name"
+    
+    # Handle compression if needed
+    if [[ "$compression_mode" == "compress" ]]; then
+        debug_log "Compressing '$file'..."
+        if ! run_command "tar -czf \"$tmpfile\" \"$file\""; then
+            error_log "Compression failed for '$file'"
+            safe_remove "$tmpfile"
+            return 1
+        fi
+    else
+        debug_log "Using pre-compressed file '$file'"
+        tmpfile="$file"  # Use the file directly
+    fi
+    
+    # Get file size
+    local filesize=$(stat -c%s "$tmpfile")
+    local free_space=$(get_free_space "${volumes[$curr_vol_index]}")
+    
+    debug_log "$(basename "$file") - Size: $(format_number $filesize) - Free: $(format_number $free_space)"
+    
+    # Handle transfer (standard or split)
+    if (( filesize > free_space )); then
+        debug_log "File too large for single volume, splitting..."
+        if split_and_transfer "$file" "$tmpfile" "$filesize"; then
+            [[ "$compression_mode" == "compress" ]] && safe_remove "$tmpfile"
+            return 0
+        else
+            [[ "$compression_mode" == "compress" ]] && safe_remove "$tmpfile"
+            return 1
+        fi
+    else
+        debug_log "Transferring '$tmpfile' to '${volumes[$curr_vol_index]}'"
+        if ! run_command "mega-put '$tmpfile' '${volumes[$curr_vol_index]}/$backup_name'"; then
+            error_log "Transfer failed for '$file'"
+            [[ "$compression_mode" == "compress" ]] && safe_remove "$tmpfile"
+            return 1
+        fi
+        [[ "$compression_mode" == "compress" ]] && safe_remove "$tmpfile"
+        return 0
+    fi
+}
+
+# Handle transfer results and volume rotation
+handle_transfer_result() {
+    local result=$1
+    
+    if (( result == 2 )); then
+        # Volume full, try next one
+        ((curr_vol_index++))
+        if (( curr_vol_index >= ${#volumes[@]} )); then
+            error_log "All volumes full during processing"
+            return 1
+        fi
+    elif (( result != 0 )); then
+        return 1
+    fi
+    
+    return 0
+}
+
+# Clean existing backups across all volumes
+clean_existing_backups() {
+    local backup_name="$1"
+    debug_log "Checking for existing backups of '$backup_name'"
+    
+    for v in "${volumes[@]}"; do
+        if run_command "mega-find \"$v/$backup_name\"" | grep -q "$backup_name"; then
+            debug_log "Found existing backup on $v - removing..."
+            run_command "mega-rm \"$v/$backup_name\""
+        fi
+    done
+}
 ###############################################################################
 #                          HELPER FUNCTIONS                                   #
 ###############################################################################

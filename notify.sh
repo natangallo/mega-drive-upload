@@ -1,9 +1,8 @@
 #!/bin/bash
 # notify.sh - Invia notifiche formattate a Telegram
 
-TTELEGRAM_BOT_TOKEN="your-bot:239487239847LONG-TOKEN098530249l"  # Inserisci il token del tuo bot Telegram
-TELEGRAM_CHAT_ID="00CHAT-ID000"                                        # Inserisci l'ID chat dove inviare il messaggio
-EMAIL_DESTINATARIO="EMAIL@DOMAIN.com"
+TELEGRAM_BOT_TOKEN="7941722837:AAFL4V0rv5mEGIQEZ7Dz74VkwKXKMSa49VQ"
+TELEGRAM_CHAT_ID="243984267"
 
 [ -z "$1" ] && echo "Usage: $0 \"notification message\"" && exit 1
 

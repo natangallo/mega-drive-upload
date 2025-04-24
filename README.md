@@ -150,13 +150,3 @@ MIT License - Free for personal and commercial use
 > 👨💻 **Maintainer**: Natan Gallo  
 > 🔗 **Compatibility**: Proxmox VE 7+, MEGA-CMD 1.5.0+
 ```
-
-Key changes made:
-1. Added Proxmox-specific documentation
-2. Updated configuration variables to match v4.0
-3. Added visual workflow diagram
-4. Included Proxmox recovery examples
-5. Highlighted new v4.0 features section
-6. Updated best practices for Proxmox environments
-7. Added compatibility notice
-8. Improved structure with clear sections
